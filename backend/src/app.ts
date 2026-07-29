@@ -37,6 +37,7 @@ import { apiLimiter } from './middleware/rate-limit.middleware';
 import { requestContext } from './middleware/request-context.middleware';
 import { sanitizeRequest } from './middleware/sanitize.middleware';
 import routes from './routes';
+import { ForbiddenError } from './utils/errors';
 import { logger } from './utils/logger';
 
 export const createApp = (): Application => {
@@ -100,7 +101,15 @@ export const createApp = (): Application => {
         if (env.CORS_ORIGINS.includes(origin)) return callback(null, true);
 
         logger.warn('Blocked CORS request from disallowed origin', { origin });
-        return callback(new Error('Not allowed by CORS'));
+
+        // Rejecting with a plain Error would reach the global handler as an
+        // unclassified crash: logged at ERROR and answered with a 500. A
+        // disallowed origin is an expected, handled condition — so it is
+        // surfaced as an operational 403 instead, keeping genuine 500s
+        // meaningful in the logs.
+        return callback(
+          new ForbiddenError('This origin is not permitted to access the API', { origin }),
+        );
       },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

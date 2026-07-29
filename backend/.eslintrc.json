@@ -42,6 +42,15 @@
     {
       "files": ["src/validators/**/*.ts", "src/config/swagger.ts"],
       "rules": { "@typescript-eslint/explicit-function-return-type": "off" }
+    },
+    {
+      "files": ["tests/**/*.ts"],
+      "rules": {
+        "@typescript-eslint/no-unsafe-member-access": "off",
+        "@typescript-eslint/no-unsafe-assignment": "off",
+        "@typescript-eslint/no-unsafe-argument": "off",
+        "@typescript-eslint/explicit-function-return-type": "off"
+      }
     }
   ]
 }
