@@ -1,0 +1,48 @@
+{
+  "compilerOptions": {
+    /* Language & module system -------------------------------------------- */
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Emit ----------------------------------------------------------------- */
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "sourceMap": true,
+    "declaration": false,
+    "removeComments": false,
+
+    /* Type-safety: strict everywhere. Enterprise code should never rely on
+       implicit `any` or unchecked index access.                              */
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+
+    /* Interop / performance ------------------------------------------------ */
+    "skipLibCheck": true,
+    "isolatedModules": true
+
+    /* Deliberately NO path aliases on the backend.
+       Node resolves relative specifiers natively, so `tsc` output runs as-is
+       with no runtime resolver, no `tsc-alias` post-processing step and no
+       divergence between `tsx` (dev) and `node dist` (prod). The frontend does
+       use an `@/` alias because Vite rewrites imports at bundle time anyway. */
+  },
+  "include": ["src/**/*.ts", "prisma/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

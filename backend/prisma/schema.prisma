@@ -1,0 +1,553 @@
+// =============================================================================
+// Mini ERP + CRM — Database schema
+// -----------------------------------------------------------------------------
+// Design principles applied here:
+//
+//  1. THIRD NORMAL FORM for master data. Money/stock are never duplicated across
+//     tables except where an intentional, documented snapshot is required.
+//  2. SNAPSHOT-ON-COMMIT for transactional documents. A SalesChallanItem copies
+//     the product's SKU/name/price at the moment it is created, so historical
+//     documents never mutate when the catalogue is edited later.
+//  3. INVENTORY IS THE SINGLE SOURCE OF TRUTH FOR QUANTITY. `Product` owns
+//     catalogue policy (price, minimumStock); `Inventory` owns the physical
+//     count. There is deliberately no `Product.currentStock` column — a second
+//     writable copy of stock is the #1 source of drift in ERP systems.
+//  4. SOFT DELETE for entities referenced by financial history (User, Customer,
+//     Product). Hard deletes would orphan audit trails and challans.
+//  5. EXPLICIT REFERENTIAL ACTIONS on every relation. Nothing is left to the
+//     database default.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+/// Application roles. Backed by a real `Role` table so permissions/descriptions
+/// can evolve without a migration, while the enum keeps compile-time safety.
+enum RoleName {
+  ADMIN
+  SALES
+  WAREHOUSE
+  ACCOUNTS
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum CustomerType {
+  RETAILER
+  WHOLESALER
+  DISTRIBUTOR
+  CORPORATE
+  WALK_IN
+}
+
+enum CustomerStatus {
+  LEAD
+  ACTIVE
+  INACTIVE
+  BLACKLISTED
+}
+
+enum FollowUpType {
+  CALL
+  EMAIL
+  MEETING
+  SITE_VISIT
+  WHATSAPP
+  OTHER
+}
+
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  OVERDUE
+  CANCELLED
+}
+
+/// Direction of an inventory change. Every physical stock change in the system
+/// produces exactly one StockMovement row with one of these types.
+enum MovementType {
+  IN
+  OUT
+  ADJUSTMENT
+  RETURN
+  DAMAGE
+}
+
+/// Business reason behind a movement — drives reporting and reconciliation.
+enum MovementReason {
+  PURCHASE_RECEIPT
+  SALES_CHALLAN
+  CHALLAN_CANCELLATION
+  CUSTOMER_RETURN
+  SUPPLIER_RETURN
+  STOCK_TAKE_ADJUSTMENT
+  DAMAGE_WRITE_OFF
+  OPENING_BALANCE
+  MANUAL_CORRECTION
+}
+
+enum ChallanStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  LOGIN_FAILED
+  STATUS_CHANGE
+  STOCK_ADJUSTMENT
+  CHALLAN_CONFIRM
+  CHALLAN_CANCEL
+}
+
+// =============================================================================
+// IDENTITY & ACCESS
+// =============================================================================
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        RoleName @unique
+  description String   @db.VarChar(255)
+  /// System roles cannot be deleted through the API.
+  isSystem    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique @db.VarChar(160)
+  passwordHash String     @db.VarChar(255)
+  firstName    String     @db.VarChar(80)
+  lastName     String     @db.VarChar(80)
+  phone        String?    @db.VarChar(20)
+  avatarUrl    String?    @db.VarChar(500)
+  status       UserStatus @default(ACTIVE)
+
+  roleId String @db.Uuid
+  /// Restrict: a role that still has members must not be removable.
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  lastLoginAt      DateTime? @db.Timestamptz(3)
+  passwordChangedAt DateTime? @db.Timestamptz(3)
+  /// Soft delete — users are referenced by immutable audit and stock history.
+  deletedAt        DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+
+  refreshTokens     RefreshToken[]
+  ownedCustomers    Customer[]        @relation("CustomerOwner")
+  followUps         CustomerFollowUp[]
+  stockMovements    StockMovement[]
+  createdChallans   SalesChallan[]    @relation("ChallanCreatedBy")
+  confirmedChallans SalesChallan[]    @relation("ChallanConfirmedBy")
+  cancelledChallans SalesChallan[]    @relation("ChallanCancelledBy")
+  auditLogs         AuditLog[]
+
+  @@index([roleId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+/// Refresh-token rotation store. We persist a SHA-256 hash, never the token
+/// itself, so a database leak cannot be replayed against the API.
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @db.VarChar(64)
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  expiresAt DateTime  @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+  /// Set when this token is rotated, forming a chain for reuse detection.
+  replacedByTokenHash String? @db.VarChar(64)
+  userAgent String?   @db.VarChar(255)
+  ipAddress String?   @db.VarChar(64)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// =============================================================================
+// CRM
+// =============================================================================
+
+model Customer {
+  id           String         @id @default(uuid()) @db.Uuid
+  /// Human-readable business key, e.g. CUST-000042. Generated server-side.
+  code         String         @unique @db.VarChar(20)
+  name         String         @db.VarChar(120)
+  businessName String?        @db.VarChar(160)
+  email        String?        @db.VarChar(160)
+  mobile       String         @db.VarChar(20)
+  /// Indian GSTIN — 15 chars, validated at the API boundary.
+  gstNumber    String?        @db.VarChar(15)
+  customerType CustomerType   @default(RETAILER)
+  status       CustomerStatus @default(LEAD)
+
+  addressLine1 String? @db.VarChar(180)
+  addressLine2 String? @db.VarChar(180)
+  city         String? @db.VarChar(80)
+  state        String? @db.VarChar(80)
+  postalCode   String? @db.VarChar(12)
+  country      String  @default("India") @db.VarChar(80)
+
+  /// Commercial terms. Decimal(14,2) — never float for money.
+  creditLimit       Decimal @default(0) @db.Decimal(14, 2)
+  outstandingAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  followUpDate DateTime? @db.Timestamptz(3)
+  notes        String?   @db.Text
+
+  /// Account owner (sales rep). SetNull so deactivating a rep never deletes the
+  /// customer record.
+  ownerId String? @db.Uuid
+  owner   User?   @relation("CustomerOwner", fields: [ownerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  deletedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+
+  followUps CustomerFollowUp[]
+  challans  SalesChallan[]
+
+  // Partial-unique semantics (unique among non-deleted rows) are enforced in the
+  // service layer; a plain unique index would block re-using a mobile number
+  // after a soft delete.
+  @@index([mobile])
+  @@index([email])
+  @@index([status])
+  @@index([customerType])
+  @@index([ownerId])
+  @@index([followUpDate])
+  @@index([deletedAt])
+  @@index([name])
+  @@map("customers")
+}
+
+model CustomerFollowUp {
+  id         String         @id @default(uuid()) @db.Uuid
+  customerId String         @db.Uuid
+  /// Cascade: follow-ups have no meaning without their customer.
+  customer   Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  type       FollowUpType   @default(CALL)
+  status     FollowUpStatus @default(PENDING)
+
+  subject     String    @db.VarChar(180)
+  notes       String?   @db.Text
+  outcome     String?   @db.Text
+  scheduledAt DateTime  @db.Timestamptz(3)
+  completedAt DateTime? @db.Timestamptz(3)
+
+  /// Restrict: preserves "who logged this activity" for the CRM timeline.
+  createdById String @db.Uuid
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([customerId, scheduledAt(sort: Desc)])
+  @@index([status, scheduledAt])
+  @@index([createdById])
+  @@map("customer_follow_ups")
+}
+
+// =============================================================================
+// CATALOGUE & INVENTORY
+// =============================================================================
+
+model Category {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique @db.VarChar(100)
+  slug        String  @unique @db.VarChar(120)
+  description String? @db.VarChar(400)
+  isActive    Boolean @default(true)
+
+  /// Self-relation enables a two-level catalogue tree without another table.
+  parentId String?    @db.Uuid
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  children Category[] @relation("CategoryTree")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  products Product[]
+
+  @@index([parentId])
+  @@index([isActive])
+  @@map("categories")
+}
+
+model Product {
+  id          String  @id @default(uuid()) @db.Uuid
+  sku         String  @unique @db.VarChar(40)
+  name        String  @db.VarChar(160)
+  description String? @db.Text
+  barcode     String? @unique @db.VarChar(64)
+  imageUrl    String? @db.VarChar(500)
+
+  categoryId String   @db.Uuid
+  /// Restrict: deleting a category that still holds products is a data-loss bug.
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Selling price excluding tax.
+  unitPrice Decimal @db.Decimal(14, 2)
+  /// Landed cost — used for margin reporting.
+  costPrice Decimal @default(0) @db.Decimal(14, 2)
+  /// GST percentage, e.g. 18.00
+  taxRate   Decimal @default(0) @db.Decimal(5, 2)
+  /// Unit of measure: PCS, BOX, KG, LTR...
+  unit      String  @default("PCS") @db.VarChar(12)
+
+  /// Reorder threshold. The physical count lives on `Inventory`.
+  minimumStock Int @default(0)
+
+  isActive  Boolean   @default(true)
+  deletedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+
+  inventory      Inventory?
+  stockMovements StockMovement[]
+  challanItems   SalesChallanItem[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@index([name])
+  @@map("products")
+}
+
+/// Authoritative stock record — exactly one row per product.
+/// All writes go through StockService inside a transaction; nothing else may
+/// update `quantityOnHand`.
+model Inventory {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @unique @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  /// Physically present units. A CHECK constraint in the migration guarantees
+  /// this can never go negative, even if application code has a bug.
+  quantityOnHand   Int @default(0)
+  /// Allocated to confirmed-but-not-dispatched documents.
+  quantityReserved Int @default(0)
+
+  warehouseLocation String? @db.VarChar(80)
+  binLocation       String? @db.VarChar(40)
+
+  /// Optimistic-locking counter, bumped on every stock write.
+  version Int @default(0)
+
+  lastMovementAt  DateTime? @db.Timestamptz(3)
+  lastStockTakeAt DateTime? @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([quantityOnHand])
+  @@index([warehouseLocation])
+  @@map("inventory")
+}
+
+/// Immutable ledger of every stock change. Rows are append-only: correcting a
+/// mistake means posting a compensating ADJUSTMENT, never editing history.
+model StockMovement {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @db.Uuid
+  /// Restrict: stock history must survive catalogue cleanup.
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  movementType MovementType
+  reason       MovementReason
+
+  /// Always a positive magnitude; `movementType` carries the sign.
+  quantity       Int
+  quantityBefore Int
+  quantityAfter  Int
+
+  /// Polymorphic source document, e.g. "SALES_CHALLAN" + challan id.
+  referenceType String? @db.VarChar(40)
+  referenceId   String? @db.Uuid
+  referenceCode String? @db.VarChar(40)
+
+  notes String? @db.VarChar(500)
+
+  createdById String @db.Uuid
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([productId, createdAt(sort: Desc)])
+  @@index([movementType])
+  @@index([reason])
+  @@index([referenceType, referenceId])
+  @@index([createdById])
+  @@index([createdAt(sort: Desc)])
+  @@map("stock_movements")
+}
+
+// =============================================================================
+// SALES
+// =============================================================================
+
+model SalesChallan {
+  id            String        @id @default(uuid()) @db.Uuid
+  /// Gap-free business number, e.g. CH-2026-000117. Allocated atomically via
+  /// the `document_sequences` table.
+  challanNumber String        @unique @db.VarChar(24)
+  status        ChallanStatus @default(DRAFT)
+
+  customerId String   @db.Uuid
+  /// Restrict: a customer with issued challans cannot be hard-deleted.
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  challanDate  DateTime  @default(now()) @db.Timestamptz(3)
+  dispatchDate DateTime? @db.Timestamptz(3)
+
+  /// Financial totals are computed server-side from the line items and stored
+  /// so historical documents never change when tax rules do.
+  subtotal       Decimal @default(0) @db.Decimal(14, 2)
+  discountAmount Decimal @default(0) @db.Decimal(14, 2)
+  taxAmount      Decimal @default(0) @db.Decimal(14, 2)
+  totalAmount    Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Address snapshot taken at confirmation time.
+  shippingAddress String? @db.Text
+  transporterName String? @db.VarChar(120)
+  vehicleNumber   String? @db.VarChar(20)
+  notes           String? @db.Text
+
+  createdById String @db.Uuid
+  createdBy   User   @relation("ChallanCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  confirmedById String?   @db.Uuid
+  confirmedBy   User?     @relation("ChallanConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  confirmedAt   DateTime? @db.Timestamptz(3)
+
+  cancelledById      String?   @db.Uuid
+  cancelledBy        User?     @relation("ChallanCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  cancelledAt        DateTime? @db.Timestamptz(3)
+  cancellationReason String?   @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  items SalesChallanItem[]
+
+  @@index([customerId, challanDate(sort: Desc)])
+  @@index([status])
+  @@index([challanDate(sort: Desc)])
+  @@index([createdById])
+  @@map("sales_challans")
+}
+
+/// Line item with a full product snapshot. Once written, the descriptive fields
+/// are never refreshed from `products` — that is the point.
+model SalesChallanItem {
+  id        String       @id @default(uuid()) @db.Uuid
+  challanId String       @db.Uuid
+  /// Cascade: deleting a DRAFT challan removes its lines.
+  challan   SalesChallan @relation(fields: [challanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  productId String  @db.Uuid
+  /// Restrict: the referenced product must remain resolvable for reporting.
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // ---- Immutable snapshot ------------------------------------------------
+  productSku  String  @db.VarChar(40)
+  productName String  @db.VarChar(160)
+  unit        String  @db.VarChar(12)
+  unitPrice   Decimal @db.Decimal(14, 2)
+  taxRate     Decimal @db.Decimal(5, 2)
+  // ------------------------------------------------------------------------
+
+  quantity        Int
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  /// quantity * unitPrice * (1 - discount%) — excluding tax.
+  lineSubtotal    Decimal @db.Decimal(14, 2)
+  lineTaxAmount   Decimal @db.Decimal(14, 2)
+  lineTotal       Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// A product may appear only once per challan — quantities must be merged.
+  @@unique([challanId, productId])
+  @@index([productId])
+  @@map("sales_challan_items")
+}
+
+// =============================================================================
+// PLATFORM
+// =============================================================================
+
+/// Atomic, gap-free counters for human-readable document numbers.
+/// Allocation uses `UPDATE ... RETURNING` inside the caller's transaction, so
+/// two concurrent challans can never receive the same number.
+model DocumentSequence {
+  id           String   @id @default(uuid()) @db.Uuid
+  /// Composite business key, e.g. "SALES_CHALLAN:2026".
+  key          String   @unique @db.VarChar(60)
+  prefix       String   @db.VarChar(12)
+  currentValue Int      @default(0)
+  padding      Int      @default(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("document_sequences")
+}
+
+/// Append-only audit trail. `before`/`after` hold redacted JSON diffs.
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// SetNull + denormalised email so the trail survives user deletion.
+  actorId    String? @db.Uuid
+  actor      User?   @relation(fields: [actorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  actorEmail String? @db.VarChar(160)
+  actorRole  String? @db.VarChar(20)
+
+  action     AuditAction
+  entityType String  @db.VarChar(40)
+  entityId   String? @db.VarChar(64)
+  /// Human-readable summary shown in the UI timeline.
+  summary    String  @db.VarChar(255)
+
+  before Json?
+  after  Json?
+
+  ipAddress String? @db.VarChar(64)
+  userAgent String? @db.VarChar(255)
+  requestId String? @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
