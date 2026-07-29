@@ -31,7 +31,7 @@ const optionalOrCleared = <T extends z.ZodTypeAny>(schema: T) =>
   z
     .union([schema, z.literal('')])
     .optional()
-    .transform((value) => (value === '' ? null : (value as z.infer<T> | undefined)));
+    .transform((value) => (value === '' ? null : (value)));
 
 // ---------------------------------------------------------------------------
 // Customers

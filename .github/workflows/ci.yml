@@ -1,0 +1,167 @@
+# =============================================================================
+# CI — runs on every push and pull request.
+#
+# Backend and frontend run as separate jobs so they execute in parallel and a
+# failure names the guilty half immediately.
+#
+# The backend job spins up a real Postgres service container: verifying that
+# migrations APPLY is the whole point. A CI run that only typechecks would pass
+# with a migration that fails on contact with a database.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# A new push to the same branch cancels the previous run — no point burning
+# minutes on a commit that has already been superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  backend:
+    name: Backend — lint, typecheck, test, migrate
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: erp
+          POSTGRES_PASSWORD: erp_password
+          POSTGRES_DB: mini_erp_test
+        ports:
+          - 5432:5432
+        # The job must not start querying before Postgres accepts connections.
+        options: >-
+          --health-cmd "pg_isready -U erp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://erp:erp_password@localhost:5432/mini_erp_test?schema=public
+      JWT_ACCESS_SECRET: ci_access_secret_0123456789abcdef0123456789abcdef0123
+      JWT_REFRESH_SECRET: ci_refresh_secret_fedcba9876543210fedcba9876543210fed
+      # Lowered from 12 so CI is not spending seconds per hash. Never in prod.
+      BCRYPT_SALT_ROUNDS: 4
+      LOG_LEVEL: error
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # Proves the migrations are valid SQL and apply cleanly to an empty
+      # database — including the hand-written CHECK constraints, which Prisma
+      # cannot validate from the schema alone.
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      # Proves the seed is idempotent and consistent with the constraints.
+      - name: Seed database
+        run: npm run db:seed
+
+      - name: Re-run seed (idempotency check)
+        run: npm run db:seed
+
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend — lint, typecheck, build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    # Only worth the minutes once the code itself is known good.
+    needs: [backend, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

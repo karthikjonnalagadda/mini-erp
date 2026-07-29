@@ -70,9 +70,12 @@ const serialiseError = (error: unknown): Record<string, unknown> => {
 
 class Logger {
   private readonly threshold: number;
+  /** Fixed metadata stamped onto every line — used by `child()`. */
+  private readonly context: Record<string, unknown>;
 
-  constructor(level: LogLevel) {
+  constructor(level: LogLevel, context: Record<string, unknown> = {}) {
     this.threshold = LOG_LEVELS[level];
+    this.context = context;
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -83,7 +86,9 @@ class Logger {
     if (!this.shouldLog(level)) return;
 
     const timestamp = new Date().toISOString();
-    const safeMeta = meta ? (redact(meta) as Record<string, unknown>) : undefined;
+    const merged = { ...this.context, ...meta };
+    const safeMeta =
+      Object.keys(merged).length > 0 ? (redact(merged) as Record<string, unknown>) : undefined;
     const sink = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
 
     if (env.isProduction) {
@@ -127,26 +132,12 @@ class Logger {
   /**
    * Returns a logger that stamps every line with fixed context (e.g. requestId).
    * Used by the request-context middleware for end-to-end traceability.
+   *
+   * Simply a new instance with merged context — no prototype surgery, no `this`
+   * aliasing, and child loggers can be nested arbitrarily.
    */
   child(context: Record<string, unknown>): Logger {
-    const parent = this;
-    const bound = Object.create(Logger.prototype) as Logger;
-    (bound as unknown as { threshold: number }).threshold = LOG_LEVELS[env.LOG_LEVEL];
-    for (const level of ['error', 'warn', 'info', 'http', 'debug'] as const) {
-      Object.defineProperty(bound, level, {
-        value: (message: string, ...rest: unknown[]) => {
-          if (level === 'error') {
-            const [err, meta] = rest as [unknown, Record<string, unknown>?];
-            parent.error(message, err, { ...context, ...meta });
-          } else {
-            const [meta] = rest as [Record<string, unknown>?];
-            parent[level](message, { ...context, ...meta });
-          }
-        },
-        writable: false,
-      });
-    }
-    return bound;
+    return new Logger(env.LOG_LEVEL, { ...this.context, ...context });
   }
 }
 

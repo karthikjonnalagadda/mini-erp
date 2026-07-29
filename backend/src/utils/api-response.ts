@@ -7,6 +7,14 @@
  *
  *   { success: true,  message, data, meta?, timestamp, requestId? }
  *   { success: false, message, error: { code, details? }, timestamp, requestId? }
+ *
+ * Each helper builds a typed body object and then sends it, rather than
+ * inlining the literal into `res.json()`. That ordering matters: `res.json()`
+ * accepts `any` and returns `Response<any>`, so an inline literal is never
+ * checked against `SuccessBody<T>` and the return value silently poisons the
+ * caller's types. Constructing the body first makes the compiler verify the
+ * envelope; the helpers return `void` because Express ignores handler return
+ * values anyway.
  */
 import type { Response } from 'express';
 
@@ -48,16 +56,26 @@ export interface ErrorBody {
 const requestIdOf = (res: Response): string | undefined =>
   (res.locals as { requestId?: string }).requestId;
 
+/** Builds the common fields shared by every success envelope. */
+const successEnvelope = <T>(
+  res: Response,
+  data: T,
+  message: string,
+  meta?: PaginationMeta,
+): SuccessBody<T> => ({
+  success: true,
+  message,
+  data,
+  ...(meta ? { meta } : {}),
+  timestamp: new Date().toISOString(),
+  ...(requestIdOf(res) ? { requestId: requestIdOf(res) } : {}),
+});
+
 export const ApiResponse = {
   /** 200 with a payload. */
-  ok<T>(res: Response, data: T, message: string = CommonMessages.FETCHED): Response<SuccessBody<T>> {
-    return res.status(HttpStatus.OK).json({
-      success: true,
-      message,
-      data,
-      timestamp: new Date().toISOString(),
-      requestId: requestIdOf(res),
-    });
+  ok<T>(res: Response, data: T, message: string = CommonMessages.FETCHED): void {
+    const body: SuccessBody<T> = successEnvelope(res, data, message);
+    res.status(HttpStatus.OK).json(body);
   },
 
   /** 200 with a page of results plus pagination metadata. */
@@ -66,26 +84,15 @@ export const ApiResponse = {
     items: T[],
     meta: PaginationMeta,
     message: string = CommonMessages.FETCHED,
-  ): Response<SuccessBody<T[]>> {
-    return res.status(HttpStatus.OK).json({
-      success: true,
-      message,
-      data: items,
-      meta,
-      timestamp: new Date().toISOString(),
-      requestId: requestIdOf(res),
-    });
+  ): void {
+    const body: SuccessBody<T[]> = successEnvelope(res, items, message, meta);
+    res.status(HttpStatus.OK).json(body);
   },
 
   /** 201 — resource created. */
-  created<T>(res: Response, data: T, message: string): Response<SuccessBody<T>> {
-    return res.status(HttpStatus.CREATED).json({
-      success: true,
-      message,
-      data,
-      timestamp: new Date().toISOString(),
-      requestId: requestIdOf(res),
-    });
+  created<T>(res: Response, data: T, message: string): void {
+    const body: SuccessBody<T> = successEnvelope(res, data, message);
+    res.status(HttpStatus.CREATED).json(body);
   },
 
   /**
@@ -93,19 +100,14 @@ export const ApiResponse = {
    * Deliberate: the frontend surfaces a toast built from `message`, and a 204
    * carries no body. Consistency beats REST purism here.
    */
-  deleted(res: Response, message: string): Response<SuccessBody<null>> {
-    return res.status(HttpStatus.OK).json({
-      success: true,
-      message,
-      data: null,
-      timestamp: new Date().toISOString(),
-      requestId: requestIdOf(res),
-    });
+  deleted(res: Response, message: string): void {
+    const body: SuccessBody<null> = successEnvelope(res, null, message);
+    res.status(HttpStatus.OK).json(body);
   },
 
-  /** 204 — used where a body genuinely adds nothing (e.g. logout). */
-  noContent(res: Response): Response {
-    return res.status(HttpStatus.NO_CONTENT).send();
+  /** 204 — used where a body genuinely adds nothing. */
+  noContent(res: Response): void {
+    res.status(HttpStatus.NO_CONTENT).send();
   },
 
   /** Failure envelope. Only the error middleware should call this directly. */
@@ -116,8 +118,8 @@ export const ApiResponse = {
     code: ErrorCodeValue,
     details?: unknown,
     stack?: string,
-  ): Response<ErrorBody> {
-    return res.status(statusCode).json({
+  ): void {
+    const body: ErrorBody = {
       success: false,
       message,
       error: {
@@ -126,7 +128,9 @@ export const ApiResponse = {
         ...(stack !== undefined ? { stack } : {}),
       },
       timestamp: new Date().toISOString(),
-      requestId: requestIdOf(res),
-    });
+      ...(requestIdOf(res) ? { requestId: requestIdOf(res) } : {}),
+    };
+
+    res.status(statusCode).json(body);
   },
 };

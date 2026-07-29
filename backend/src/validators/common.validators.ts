@@ -200,8 +200,16 @@ export const dateRangeQuerySchema = z.object({
 /**
  * Cross-field guard: `dateFrom` must not be after `dateTo`. Applied with
  * `.superRefine` at the schema level so the error attaches to the right field.
+ *
+ * The explicit `ZodEffects<T, z.output<T>, z.input<T>>` return type is load
+ * bearing. Without it, TypeScript widens the inferred output of `.superRefine`
+ * on a generic schema to `any`, and every `z.infer<typeof someListQuerySchema>`
+ * silently becomes `any` — which then flows into the service call unchecked.
+ * Annotating it keeps the parsed query strongly typed all the way through.
  */
-export const withValidDateRange = <T extends z.ZodTypeAny>(schema: T) =>
+export const withValidDateRange = <T extends z.ZodTypeAny>(
+  schema: T,
+): z.ZodEffects<T, z.output<T>, z.input<T>> =>
   schema.superRefine((value, ctx) => {
     const { dateFrom, dateTo } = value as { dateFrom?: Date; dateTo?: Date };
     if (dateFrom && dateTo && dateFrom > dateTo) {
@@ -211,7 +219,9 @@ export const withValidDateRange = <T extends z.ZodTypeAny>(schema: T) =>
         message: 'Start date must be before end date',
       });
     }
-  });
+    // Zod types `.superRefine` on a generic schema as ZodEffects<T, any, any>.
+    // The assertion re-attaches the real input/output types promised above.
+  }) as z.ZodEffects<T, z.output<T>, z.input<T>>;
 
 /**
  * Password policy.

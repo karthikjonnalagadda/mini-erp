@@ -92,4 +92,6 @@ export const RolePolicy = {
 } as const;
 
 /** Applies a named policy: `authorizePolicy(RolePolicy.CONFIRM_CHALLANS)`. */
-export const authorizePolicy = (policy: readonly RoleName[]) => authorize(...policy);
+export const authorizePolicy = (
+  policy: readonly RoleName[],
+): ((req: Request, res: Response, next: NextFunction) => void) => authorize(...policy);

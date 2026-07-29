@@ -1,0 +1,109 @@
+# =============================================================================
+# Local development stack: Postgres + API + SPA.
+#
+#   docker compose up -d --build
+#   docker compose exec api npx prisma migrate deploy
+#   docker compose exec api npm run db:seed
+#
+#   SPA   http://localhost:5173
+#   API   http://localhost:4000/api/v1
+#   Docs  http://localhost:4000/api/v1/docs
+#
+# `docker compose down -v` removes the volume and starts from an empty database.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: erp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp_password
+      POSTGRES_DB: mini_erp
+      # Speeds up initdb; safe because this is a disposable dev database.
+      POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256'
+    ports:
+      # Exposed so you can point a GUI client or `prisma studio` at it.
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` returns success as soon as the socket accepts connections,
+      # which is what `depends_on: service_healthy` waits for. Without it the
+      # API starts first, fails to connect and exits.
+      test: ['CMD-SHELL', 'pg_isready -U erp -d mini_erp']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - erp-network
+
+  # ---------------------------------------------------------------------------
+  # API
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: erp-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      API_PREFIX: /api/v1
+      # `postgres` is the compose service name, resolved on the shared network.
+      DATABASE_URL: postgresql://erp:erp_password@postgres:5432/mini_erp?schema=public
+      # Development-only secrets. Generate real ones for any deployment:
+      #   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      JWT_ACCESS_SECRET: compose_dev_access_secret_change_me_0123456789abcdef0123
+      JWT_REFRESH_SECRET: compose_dev_refresh_secret_change_me_fedcba9876543210fed
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      BCRYPT_SALT_ROUNDS: 12
+      CORS_ORIGINS: http://localhost:5173,http://localhost:4173
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX: 300
+      AUTH_RATE_LIMIT_MAX: 10
+      LOG_LEVEL: info
+      SEED_ADMIN_EMAIL: admin@erpportal.io
+      SEED_ADMIN_PASSWORD: Admin@12345
+    ports:
+      - '4000:4000'
+    networks:
+      - erp-network
+
+  # ---------------------------------------------------------------------------
+  # SPA
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Build-time: Vite inlines this into the bundle. The browser (not the
+        # container) makes the call, so it must be a host-reachable URL.
+        VITE_API_BASE_URL: http://localhost:4000/api/v1
+    container_name: erp-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - '5173:80'
+    networks:
+      - erp-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  erp-network:
+    driver: bridge

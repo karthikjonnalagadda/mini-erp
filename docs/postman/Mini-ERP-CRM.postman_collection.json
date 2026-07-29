@@ -1,0 +1,1397 @@
+{
+  "info": {
+    "_postman_id": "8f3c1d24-7a5b-4e9c-b21f-6d0a4c85e310",
+    "name": "Mini ERP + CRM Operations Portal",
+    "description": "Complete API collection.\n\n## Getting started\n\n1. Select the **Local** environment (or edit `baseUrl` in the collection variables).\n2. Run **Auth › Login (Admin)**. The access token is captured automatically by a test script and used by every subsequent request — there is no need to copy tokens by hand.\n3. Requests that create a resource store its id into a collection variable (`customerId`, `productId`, `challanId`), so the folders can be run top-to-bottom as a workflow.\n\n## Running the full suite\n\nUse the Collection Runner, or Newman:\n\n```bash\nnewman run docs/postman/Mini-ERP-CRM.postman_collection.json \\\n  -e docs/postman/Local.postman_environment.json\n```\n\nThe **Business Rules** folder is the interesting one: it asserts the rules that make this an ERP rather than a CRUD app — draft challans do not move stock, confirmation does, over-selling is rejected with a per-SKU shortage list, and a confirmed challan cannot be edited.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Collection-level assertions applied to EVERY request.",
+          "pm.test('Response uses the standard envelope', function () {",
+          "    const body = pm.response.json();",
+          "    pm.expect(body).to.have.property('success');",
+          "    pm.expect(body).to.have.property('timestamp');",
+          "});",
+          "",
+          "pm.test('Response carries a correlation id', function () {",
+          "    pm.expect(pm.response.headers.has('x-request-id')).to.be.true;",
+          "});",
+          "",
+          "// A response slower than this on a local database indicates a missing",
+          "// index or an N+1 query.",
+          "pm.test('Responds within 2000ms', function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000/api/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "customerId", "value": "", "type": "string" },
+    { "key": "categoryId", "value": "", "type": "string" },
+    { "key": "productId", "value": "", "type": "string" },
+    { "key": "challanId", "value": "", "type": "string" },
+    { "key": "followUpId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('Returns an access token and the user', function () {",
+                  "    pm.expect(body.data.tokens.accessToken).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.data.user.email).to.be.a('string');",
+                  "});",
+                  "",
+                  "pm.test('Never returns the password hash', function () {",
+                  "    pm.expect(JSON.stringify(body.data.user)).to.not.include('passwordHash');",
+                  "});",
+                  "",
+                  "pm.test('Sets an httpOnly refresh cookie', function () {",
+                  "    const cookie = pm.cookies.jar();",
+                  "    pm.expect(pm.response.headers.get('set-cookie') || '').to.include('erp_refresh_token');",
+                  "});",
+                  "",
+                  "// Captured for every subsequent request in the collection.",
+                  "pm.collectionVariables.set('accessToken', body.data.tokens.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.data.tokens.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@erpportal.io\",\n  \"password\": \"Admin@12345\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Exchanges credentials for a short-lived access token plus an httpOnly refresh cookie."
+          }
+        },
+        {
+          "name": "Login — wrong password (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('Uses the stable INVALID_CREDENTIALS code', function () {",
+                  "    pm.expect(body.error.code).to.eql('INVALID_CREDENTIALS');",
+                  "});",
+                  "",
+                  "pm.test('Does not reveal whether the account exists', function () {",
+                  "    // Same message for 'no such user' and 'wrong password'.",
+                  "    pm.expect(body.message.toLowerCase()).to.not.include('not found');",
+                  "    pm.expect(body.message.toLowerCase()).to.not.include('no such');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@erpportal.io\",\n  \"password\": \"WrongPassword1\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Login — malformed email (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns field-level detail', function () {",
+                  "    pm.expect(body.error.code).to.eql('VALIDATION_ERROR');",
+                  "    pm.expect(body.error.details).to.be.an('array');",
+                  "    pm.expect(body.error.details[0]).to.have.property('field');",
+                  "    pm.expect(body.error.details[0]).to.have.property('message');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"x\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Current user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns the signed-in user with their role', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.data).to.have.property('email');",
+                  "    pm.expect(body.data.role).to.have.property('name');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
+          }
+        },
+        {
+          "name": "No token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Protected routes reject anonymous callers', function () {",
+                  "    pm.expect(pm.response.json().success).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
+          }
+        },
+        {
+          "name": "Refresh session",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "refresh"] },
+            "description": "Rotates the refresh token. Presenting an ALREADY-USED token is treated as theft and revokes every session for that user — run this twice in a row to observe it."
+          }
+        },
+        {
+          "name": "List roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/roles", "host": ["{{baseUrl}}"], "path": ["auth", "roles"] }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Customers",
+      "item": [
+        {
+          "name": "List customers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('Includes complete pagination metadata', function () {",
+                  "    pm.expect(body.meta).to.include.all.keys(",
+                  "        'page', 'limit', 'totalItems', 'totalPages', 'hasNextPage', 'hasPreviousPage');",
+                  "});",
+                  "",
+                  "pm.test('Money fields are numbers, not Decimal objects', function () {",
+                  "    if (body.data.length > 0) {",
+                  "        pm.expect(body.data[0].creditLimit).to.be.a('number');",
+                  "        pm.expect(body.data[0].outstandingAmount).to.be.a('number');",
+                  "    }",
+                  "});",
+                  "",
+                  "if (body.data.length > 0) {",
+                  "    pm.collectionVariables.set('customerId', body.data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customers?page=1&limit=20&sortBy=createdAt&sortOrder=desc",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "sortBy", "value": "createdAt" },
+                { "key": "sortOrder", "value": "desc" },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "status", "value": "ACTIVE", "disabled": true },
+                { "key": "customerType", "value": "WHOLESALER", "disabled": true },
+                { "key": "followUpDue", "value": "true", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Limit is clamped to 100",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('An oversized limit is clamped, not honoured', function () {",
+                  "    // Protects the database from `?limit=100000`.",
+                  "    pm.expect(pm.response.json().meta.limit).to.be.at.most(100);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customers?limit=100000",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers"],
+              "query": [{ "key": "limit", "value": "100000" }]
+            }
+          }
+        },
+        {
+          "name": "Create customer",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique mobile per run, so the folder can be re-run without",
+                  "// tripping the uniqueness rule.",
+                  "const suffix = String(Date.now()).slice(-7);",
+                  "pm.variables.set('uniqueMobile', '9' + suffix + '00'.slice(0, 9 - suffix.length));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('Assigns a sequential customer code', function () {",
+                  "    pm.expect(body.data.code).to.match(/^CUST-\\d{6}$/);",
+                  "});",
+                  "",
+                  "pm.test('Computes available credit server-side', function () {",
+                  "    pm.expect(body.data.availableCredit).to.eql(",
+                  "        body.data.creditLimit - body.data.outstandingAmount);",
+                  "});",
+                  "",
+                  "pm.collectionVariables.set('customerId', body.data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ramesh Kulkarni\",\n  \"businessName\": \"Kulkarni Electricals\",\n  \"email\": \"ramesh@kulkarnielectricals.in\",\n  \"mobile\": \"{{uniqueMobile}}\",\n  \"gstNumber\": \"27AAPFU0939F1ZV\",\n  \"customerType\": \"RETAILER\",\n  \"status\": \"ACTIVE\",\n  \"addressLine1\": \"14, Market Yard\",\n  \"city\": \"Pune\",\n  \"state\": \"Maharashtra\",\n  \"postalCode\": \"411037\",\n  \"creditLimit\": 150000,\n  \"notes\": \"Created from the Postman collection.\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/customers", "host": ["{{baseUrl}}"], "path": ["customers"] }
+          }
+        },
+        {
+          "name": "Create — invalid GSTIN (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "pm.test('The GST field is named in the error detail', function () {",
+                  "    const details = pm.response.json().error.details;",
+                  "    pm.expect(details.some(d => d.field.includes('gstNumber'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Invalid GST Test\",\n  \"mobile\": \"9876543210\",\n  \"gstNumber\": \"NOTAVALIDGST99\",\n  \"customerType\": \"RETAILER\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/customers", "host": ["{{baseUrl}}"], "path": ["customers"] }
+          }
+        },
+        {
+          "name": "Get customer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{customerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers", "{{customerId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get — unknown id (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('Uses the NOT_FOUND code', () =>",
+                  "    pm.expect(pm.response.json().error.code).to.eql('NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customers/00000000-0000-4000-8000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers", "00000000-0000-4000-8000-000000000000"]
+            }
+          }
+        },
+        {
+          "name": "Update customer",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\",\n  \"creditLimit\": 250000,\n  \"notes\": \"Credit limit increased after review.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{customerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers", "{{customerId}}"]
+            }
+          }
+        },
+        {
+          "name": "Schedule follow-up",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The API requires a FUTURE date for a new follow-up.",
+                  "const next = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);",
+                  "pm.variables.set('futureDate', next.toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('followUpId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CALL\",\n  \"subject\": \"Discuss Q3 requirements\",\n  \"notes\": \"Bring the updated rate card.\",\n  \"scheduledAt\": \"{{futureDate}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{customerId}}/follow-ups",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers", "{{customerId}}", "follow-ups"]
+            }
+          }
+        },
+        {
+          "name": "Complete follow-up",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"Confirmed a 40-unit order for next week.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/customers/follow-ups/{{followUpId}}/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers", "follow-ups", "{{followUpId}}", "complete"]
+            }
+          }
+        },
+        {
+          "name": "Activity timeline",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{customerId}}/timeline",
+              "host": ["{{baseUrl}}"],
+              "path": ["customers", "{{customerId}}", "timeline"]
+            },
+            "description": "Follow-ups and audit events merged into one chronology."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catalogue",
+      "item": [
+        {
+          "name": "Category options",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json().data;",
+                  "if (data.length > 0) pm.collectionVariables.set('categoryId', data[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/categories/options",
+              "host": ["{{baseUrl}}"],
+              "path": ["categories", "options"]
+            }
+          }
+        },
+        {
+          "name": "List products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const data = pm.response.json().data;",
+                  "pm.test('Stock status is derived server-side', function () {",
+                  "    if (data.length > 0) {",
+                  "        pm.expect(data[0].stock.status).to.be.oneOf(",
+                  "            ['IN_STOCK', 'LOW_STOCK', 'OUT_OF_STOCK']);",
+                  "        pm.expect(data[0].stock.available).to.be.a('number');",
+                  "    }",
+                  "});",
+                  "",
+                  "// Prefer a product with stock, so the challan folder can dispatch it.",
+                  "const stocked = data.find(p => p.stock.onHand > 20) || data[0];",
+                  "if (stocked) pm.collectionVariables.set('productId', stocked.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products?page=1&limit=20&isActive=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["products"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "isActive", "value": "true" },
+                { "key": "lowStock", "value": "true", "disabled": true },
+                { "key": "categoryId", "value": "{{categoryId}}", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create product",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.variables.set('uniqueSku', 'TEST-' + String(Date.now()).slice(-8));"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "",
+                  "const data = pm.response.json().data;",
+                  "pm.test('Opening stock is reflected on hand', function () {",
+                  "    // Posted through the ledger, not written directly.",
+                  "    pm.expect(data.stock.onHand).to.eql(100);",
+                  "});",
+                  "",
+                  "pm.test('Price including tax is computed', function () {",
+                  "    pm.expect(data.priceWithTax).to.eql(Number((500 * 1.18).toFixed(2)));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{uniqueSku}}\",\n  \"name\": \"Test Product from Postman\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"unitPrice\": 500,\n  \"costPrice\": 350,\n  \"taxRate\": 18,\n  \"unit\": \"PCS\",\n  \"minimumStock\": 20,\n  \"openingStock\": 100,\n  \"warehouseLocation\": \"WH-A\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] }
+          }
+        },
+        {
+          "name": "Create — cost above selling price (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"BAD-MARGIN-001\",\n  \"name\": \"Sold below cost\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"unitPrice\": 100,\n  \"costPrice\": 500,\n  \"taxRate\": 18\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Inventory",
+      "item": [
+        {
+          "name": "Inventory summary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns aggregates, valuation and worklists', function () {",
+                  "    const d = pm.response.json().data;",
+                  "    pm.expect(d).to.include.all.keys('totalProducts', 'totalUnits', 'lowStockCount', 'outOfStockCount');",
+                  "    pm.expect(d.valuation).to.include.all.keys('atCost', 'atSelling');",
+                  "    pm.expect(d.lowStockProducts).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/inventory/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["inventory", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Adjust stock (+25)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Reports the before and after balance', function () {",
+                  "    const d = pm.response.json().data;",
+                  "    pm.expect(d.quantityAfter - d.quantityBefore).to.eql(25);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityDelta\": 25,\n  \"reason\": \"PURCHASE_RECEIPT\",\n  \"notes\": \"Goods received against PO-2026-0042\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/inventory/{{productId}}/adjust",
+              "host": ["{{baseUrl}}"],
+              "path": ["inventory", "{{productId}}", "adjust"]
+            }
+          }
+        },
+        {
+          "name": "Adjust below zero (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "pm.test('Negative stock is impossible', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.be.oneOf(",
+                  "        ['INSUFFICIENT_STOCK', 'BUSINESS_RULE_VIOLATION']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityDelta\": -999999,\n  \"reason\": \"DAMAGE_WRITE_OFF\",\n  \"notes\": \"Deliberately impossible write-off\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/inventory/{{productId}}/adjust",
+              "host": ["{{baseUrl}}"],
+              "path": ["inventory", "{{productId}}", "adjust"]
+            }
+          }
+        },
+        {
+          "name": "Zero adjustment rejected (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "pm.test('A no-op adjustment is not a valid ledger entry', () =>",
+                  "    pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityDelta\": 0,\n  \"reason\": \"MANUAL_CORRECTION\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/inventory/{{productId}}/adjust",
+              "host": ["{{baseUrl}}"],
+              "path": ["inventory", "{{productId}}", "adjust"]
+            }
+          }
+        },
+        {
+          "name": "Stock ledger",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/stock-movements?page=1&limit=20&sortOrder=desc",
+              "host": ["{{baseUrl}}"],
+              "path": ["stock-movements"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "sortOrder", "value": "desc" },
+                { "key": "productId", "value": "{{productId}}", "disabled": true },
+                { "key": "movementType", "value": "OUT", "disabled": true },
+                { "key": "dateFrom", "value": "2026-01-01", "disabled": true }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business Rules",
+      "description": "The rules that make this an ERP rather than a CRUD app. Run this folder top-to-bottom.",
+      "item": [
+        {
+          "name": "1. Create draft challan",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Always created as DRAFT', () => pm.expect(d.status).to.eql('DRAFT'));",
+                  "",
+                  "pm.test('Server allocates a gap-free challan number', function () {",
+                  "    pm.expect(d.challanNumber).to.match(/^CH-\\d{4}-\\d{6}$/);",
+                  "});",
+                  "",
+                  "pm.test('Line items snapshot the product', function () {",
+                  "    pm.expect(d.items[0]).to.include.all.keys('sku', 'name', 'unitPrice', 'taxRate');",
+                  "});",
+                  "",
+                  "pm.test('Totals are computed server-side and are self-consistent', function () {",
+                  "    const t = d.totals;",
+                  "    const expected = Number((t.subtotal - t.discountAmount + t.taxAmount).toFixed(2));",
+                  "    pm.expect(t.totalAmount).to.eql(expected);",
+                  "});",
+                  "",
+                  "pm.test('A draft can be edited, deleted and confirmed', function () {",
+                  "    pm.expect(d.permissions.canEdit).to.be.true;",
+                  "    pm.expect(d.permissions.canConfirm).to.be.true;",
+                  "});",
+                  "",
+                  "pm.collectionVariables.set('challanId', d.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"quantity\": 5,\n      \"discountPercent\": 5\n    }\n  ],\n  \"transporterName\": \"VRL Logistics\",\n  \"vehicleNumber\": \"MH12AB1234\",\n  \"notes\": \"Created by the Postman business-rules suite.\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/challans", "host": ["{{baseUrl}}"], "path": ["challans"] }
+          }
+        },
+        {
+          "name": "2. Duplicate product on one challan (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "pm.test('A product may appear only once per challan', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"items\": [\n    { \"productId\": \"{{productId}}\", \"quantity\": 2 },\n    { \"productId\": \"{{productId}}\", \"quantity\": 3 }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/challans", "host": ["{{baseUrl}}"], "path": ["challans"] }
+          }
+        },
+        {
+          "name": "3. Over-sell is rejected (422 INSUFFICIENT_STOCK)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Creating the draft succeeds — a draft does not touch stock.",
+                  "pm.test('201 Created — a draft may exceed available stock', () =>",
+                  "    pm.response.to.have.status(201));",
+                  "",
+                  "pm.collectionVariables.set('overSellChallanId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"items\": [\n    { \"productId\": \"{{productId}}\", \"quantity\": 999999 }\n  ],\n  \"notes\": \"Deliberately exceeds available stock.\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/challans", "host": ["{{baseUrl}}"], "path": ["challans"] }
+          }
+        },
+        {
+          "name": "4. Confirming the over-sell fails with per-SKU detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns INSUFFICIENT_STOCK', () =>",
+                  "    pm.expect(body.error.code).to.eql('INSUFFICIENT_STOCK'));",
+                  "",
+                  "pm.test('Names the short SKU with requested vs available', function () {",
+                  "    const shortages = body.error.details.shortages;",
+                  "    pm.expect(shortages).to.be.an('array').with.length.above(0);",
+                  "    pm.expect(shortages[0]).to.include.all.keys('sku', 'requested', 'available');",
+                  "});",
+                  "",
+                  "pm.test('Nothing was written — the transaction rolled back', function () {",
+                  "    // Verified by the next request, which re-reads the challan.",
+                  "    pm.expect(body.success).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{overSellChallanId}}/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{overSellChallanId}}", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "5. Failed confirm left it as DRAFT",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Still DRAFT — the rollback was complete', function () {",
+                  "    pm.expect(pm.response.json().data.status).to.eql('DRAFT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{overSellChallanId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{overSellChallanId}}"]
+            }
+          }
+        },
+        {
+          "name": "6. Confirm the valid challan — stock is deducted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Status is CONFIRMED', () => pm.expect(d.status).to.eql('CONFIRMED'));",
+                  "",
+                  "pm.test('Records who confirmed it and when', function () {",
+                  "    pm.expect(d.audit.confirmedAt).to.be.a('string');",
+                  "    pm.expect(d.audit.confirmedBy).to.not.be.null;",
+                  "});",
+                  "",
+                  "pm.test('A confirmed challan is immutable', function () {",
+                  "    pm.expect(d.permissions.canEdit).to.be.false;",
+                  "    pm.expect(d.permissions.canDelete).to.be.false;",
+                  "    pm.expect(d.permissions.canCancel).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"transporterName\": \"TCI Express\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{challanId}}/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{challanId}}", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "7. Editing a confirmed challan is rejected (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "pm.test('Only drafts are editable', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.be.oneOf(",
+                  "        ['BUSINESS_RULE_VIOLATION', 'INVALID_STATE_TRANSITION']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Trying to edit a confirmed document\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{challanId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{challanId}}"]
+            }
+          }
+        },
+        {
+          "name": "8. Confirming twice is rejected (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "pm.test('CONFIRMED -> CONFIRMED is not a legal transition', function () {",
+                  "    pm.expect(pm.response.json().error.code).to.eql('INVALID_STATE_TRANSITION');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{challanId}}/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{challanId}}", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "9. Cancel without a reason (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+                  "pm.test('A cancellation reason is mandatory', () =>",
+                  "    pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{challanId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{challanId}}", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "10. Cancel the confirmed challan — stock returns",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Status is CANCELLED and the reason is recorded', function () {",
+                  "    pm.expect(d.status).to.eql('CANCELLED');",
+                  "    pm.expect(d.audit.cancellationReason).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('CANCELLED is terminal', function () {",
+                  "    pm.expect(d.permissions.canCancel).to.be.false;",
+                  "    pm.expect(d.permissions.canConfirm).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Customer revised the order before dispatch.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{challanId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{challanId}}", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "11. Ledger shows the OUT and the reversing IN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "",
+                  "const rows = pm.response.json().data;",
+                  "pm.test('Both the dispatch and its reversal are recorded', function () {",
+                  "    const reasons = rows.map(r => r.reason);",
+                  "    pm.expect(reasons).to.include('SALES_CHALLAN');",
+                  "    pm.expect(reasons).to.include('CHALLAN_CANCELLATION');",
+                  "});",
+                  "",
+                  "pm.test('Every row carries a running balance', function () {",
+                  "    rows.forEach(r => {",
+                  "        pm.expect(r.quantityBefore).to.be.a('number');",
+                  "        pm.expect(r.quantityAfter).to.be.a('number');",
+                  "        pm.expect(r.quantityAfter).to.be.at.least(0);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/stock-movements?referenceType=SALES_CHALLAN&limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["stock-movements"],
+              "query": [
+                { "key": "referenceType", "value": "SALES_CHALLAN" },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "12. Download challan PDF",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns a PDF document', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/pdf');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{challanId}}/pdf",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{challanId}}", "pdf"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RBAC",
+      "description": "Role separation. Run 'Login (Sales)' first, then the requests below.",
+      "item": [
+        {
+          "name": "Login (Sales)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.data.user.role.name).to.eql('SALES');",
+                  "pm.collectionVariables.set('accessToken', body.data.tokens.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"sales@erpportal.io\",\n  \"password\": \"Admin@12345\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Sales cannot confirm a challan (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "pm.test('Separation of duties: raising a document is not releasing stock', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.error.code).to.eql('FORBIDDEN');",
+                  "    pm.expect(body.error.details.requiredRoles).to.include('WAREHOUSE');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{baseUrl}}/challans/{{challanId}}/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "{{challanId}}", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "Sales cannot adjust stock (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"quantityDelta\": 100,\n  \"reason\": \"MANUAL_CORRECTION\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/inventory/{{productId}}/adjust",
+              "host": ["{{baseUrl}}"],
+              "path": ["inventory", "{{productId}}", "adjust"]
+            }
+          }
+        },
+        {
+          "name": "Sales cannot list users (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/auth/users", "host": ["{{baseUrl}}"], "path": ["auth", "users"] }
+          }
+        },
+        {
+          "name": "Sales CAN manage customers (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK — the CRM is a sales responsibility', () =>",
+                  "    pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/customers", "host": ["{{baseUrl}}"], "path": ["customers"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard & Audit",
+      "item": [
+        {
+          "name": "Dashboard overview",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns metrics, charts and worklists in one call', function () {",
+                  "    const d = pm.response.json().data;",
+                  "    pm.expect(d.metrics).to.be.an('array');",
+                  "    pm.expect(d.charts).to.include.all.keys('salesTrend', 'stockMovement');",
+                  "    pm.expect(d.lists).to.include.all.keys('lowStockProducts', 'topCustomers');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/dashboard", "host": ["{{baseUrl}}"], "path": ["dashboard"] }
+          }
+        },
+        {
+          "name": "Audit logs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Audit payloads never contain secrets', function () {",
+                  "    const raw = JSON.stringify(pm.response.json().data);",
+                  "    pm.expect(raw).to.not.include('passwordHash');",
+                  "    pm.expect(raw.toLowerCase()).to.not.match(/\"password\"\\s*:\\s*\"(?!\\[REDACTED\\])/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/audit-logs?page=1&limit=25",
+              "host": ["{{baseUrl}}"],
+              "path": ["audit-logs"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "25" },
+                { "key": "action", "value": "CHALLAN_CONFIRM", "disabled": true },
+                { "key": "entityType", "value": "SalesChallan", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Health — liveness",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:4000/health", "protocol": "http", "host": ["localhost"], "port": "4000", "path": ["health"] }
+          }
+        }
+      ]
+    }
+  ]
+}

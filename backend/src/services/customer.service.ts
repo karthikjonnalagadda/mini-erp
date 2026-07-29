@@ -169,8 +169,8 @@ class CustomerService {
     const updated = await customerRepository.update(id, data);
 
     const changes = auditService.diff(
-      existing as unknown as Record<string, unknown>,
-      dto as Record<string, unknown>,
+      existing,
+      dto,
     );
     if (changes) {
       void auditService.record({

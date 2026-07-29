@@ -16,9 +16,39 @@ module.exports = {
   ],
   ignorePatterns: ['dist', 'node_modules', '*.cjs', '*.config.js'],
   rules: {
-    // Fast Refresh only works when a module exports components exclusively.
-    // Context/hook files legitimately export both, hence the constant allowance.
-    'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+    /**
+     * Fast Refresh only works when a module exports components exclusively.
+     *
+     * Several modules here deliberately export a component alongside a related
+     * helper — `Badge` with `badgeVariants`, `AuthProvider` with `useAuth`,
+     * `Toaster` with `toast`. That co-location is the point: a consumer that
+     * imports the component almost always wants the helper too, and splitting
+     * them would scatter one concept across two files for a dev-server
+     * optimisation.
+     *
+     * Rather than silencing the rule (which would hide genuine violations) or
+     * leaving eleven permanent warnings (which trains people to ignore output),
+     * the known-good export names are allow-listed. Anything else still warns.
+     */
+    'react-refresh/only-export-components': [
+      'warn',
+      {
+        allowConstantExport: true,
+        allowExportNames: [
+          'badgeVariants',
+          'buttonVariants',
+          'toastVariants',
+          'statusVariant',
+          'fieldAria',
+          'buildPageWindow',
+          'useAuth',
+          'useTheme',
+          'useToast',
+          'toast',
+          'toastApiError',
+        ],
+      },
+    ],
 
     '@typescript-eslint/no-unused-vars': [
       'error',

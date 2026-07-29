@@ -9,7 +9,8 @@
  *  2. Query events are piped into our logger so slow queries are visible in
  *     development without dragging in an APM dependency.
  */
-import { PrismaClient, Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 import { env } from './env';
 import { logger } from '../utils/logger';

@@ -16,7 +16,7 @@
  * errors one round-trip at a time.
  */
 import type { NextFunction, Request, Response } from 'express';
-import { ZodError } from 'zod';
+import type { ZodError } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 import { CommonMessages } from '../constants/messages';
@@ -59,7 +59,9 @@ export const validate =
         // parsed result on `res.locals` too, so controllers get the coerced
         // types (numbers/Dates) rather than the string-typed originals.
         Object.assign(req.query, result.data as Record<string, unknown>);
-        _res.locals.query = result.data;
+        // `res.locals` is `Record<string, any>`; narrowing the target keeps the
+        // assignment from being an unchecked `any` write.
+        (_res.locals as { query?: unknown }).query = result.data as unknown;
       } else {
         errors.push(...toFieldErrors(result.error, 'query'));
       }
@@ -87,5 +89,12 @@ export const validate =
  *
  * Controllers call `getValidatedQuery<CustomerListQuery>(res)` instead of
  * casting `req.query`, which keeps the cast in exactly one place.
+ *
+ * The cast goes through `unknown` deliberately: `res.locals` is typed
+ * `Record<string, any>` by Express, and returning that `any` directly would
+ * silently poison the caller's type — every downstream argument would become
+ * unchecked. Narrowing to `unknown` first forces this one line to be the only
+ * unsafe step, and it is guarded by the `validate` middleware that populated it.
  */
-export const getValidatedQuery = <T>(res: Response): T => res.locals.query as T;
+export const getValidatedQuery = <T>(res: Response): T =>
+  (res.locals as { query?: unknown }).query as T;

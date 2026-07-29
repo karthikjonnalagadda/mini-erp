@@ -336,8 +336,8 @@ class ProductService {
     });
 
     const changes = auditService.diff(
-      existing as unknown as Record<string, unknown>,
-      dto as Record<string, unknown>,
+      existing,
+      dto,
     );
     if (changes) {
       void auditService.record({

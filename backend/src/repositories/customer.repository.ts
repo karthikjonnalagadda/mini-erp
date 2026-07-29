@@ -133,7 +133,7 @@ class CustomerRepository {
         [field]: value,
         deletedAt: null,
         ...(excludeId ? { NOT: { id: excludeId } } : {}),
-      } as Prisma.CustomerWhereInput,
+      },
       select: { id: true },
     });
     return found !== null;

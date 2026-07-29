@@ -162,7 +162,7 @@ class UserRepository {
     const roleById = new Map(roles.map((role) => [role.id, role.name]));
 
     return rows.map((row) => ({
-      role: roleById.get(row.roleId) ?? ('ADMIN' as RoleName),
+      role: roleById.get(row.roleId) ?? ('ADMIN'),
       count: row._count._all,
     }));
   }

@@ -68,9 +68,34 @@ const toJsonPayload = (value: unknown): Prisma.InputJsonValue | undefined => {
 
   // 16 KB ceiling — beyond this we store a marker rather than the payload.
   if (serialised.length > 16_384) {
-    return { truncated: true, size: serialised.length } as Prisma.InputJsonValue;
+    return { truncated: true, size: serialised.length };
   }
   return JSON.parse(serialised) as Prisma.InputJsonValue;
+};
+
+/**
+ * Reduces a value to something comparable with `!==`.
+ *
+ * Without this, every update looks like a change: a `Date` and a `Decimal` are
+ * objects, so identity comparison always differs even when the value is the
+ * same. Serialising via JSON (rather than `String()`) avoids the
+ * `[object Object]` trap for plain objects, which would make two different
+ * objects compare equal.
+ */
+const normaliseForComparison = (value: unknown): string | number | boolean | null | undefined => {
+  if (value === null || value === undefined) return value;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object') {
+    // Covers Prisma.Decimal (which has a meaningful toJSON) and nested objects.
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'bigint') return value.toString();
+  // Symbols and functions have no meaningful comparable form and never appear
+  // in a DTO; treating them as absent is safer than stringifying them.
+  return undefined;
 };
 
 const toCreateInput = (entry: AuditEntryInput): Prisma.AuditLogUncheckedCreateInput => ({
@@ -153,31 +178,28 @@ class AuditService {
   /**
    * Computes a shallow diff so the audit row stores only what actually changed.
    * Storing whole entities makes the table unreadable and expensive.
+   *
+   * Deliberately non-generic and typed on `Record<string, unknown>`: callers
+   * compare a Prisma model against a DTO, which are different shapes by design
+   * (`Decimal` vs `number`). A generic signature would try to unify them and
+   * fail; the explicit cast at each call site is the honest expression of
+   * "these are two loosely-related bags of fields".
    */
-  diff<T extends Record<string, unknown>>(
-    before: T,
-    after: Partial<T>,
-  ): { before: Partial<T>; after: Partial<T> } | null {
-    const changedBefore: Partial<T> = {};
-    const changedAfter: Partial<T> = {};
+  diff(
+    before: Record<string, unknown>,
+    after: Record<string, unknown>,
+  ): { before: Record<string, unknown>; after: Record<string, unknown> } | null {
+    const changedBefore: Record<string, unknown> = {};
+    const changedAfter: Record<string, unknown> = {};
     let hasChanges = false;
 
-    for (const key of Object.keys(after) as Array<keyof T>) {
+    for (const key of Object.keys(after)) {
       const previous = before[key];
       const next = after[key];
 
-      // Normalise Date/Decimal to strings before comparing, otherwise every
-      // update looks like a change because object identity differs.
-      const normalise = (value: unknown): unknown =>
-        value instanceof Date
-          ? value.toISOString()
-          : typeof value === 'object' && value !== null && 'toString' in value
-            ? String(value)
-            : value;
-
-      if (next !== undefined && normalise(previous) !== normalise(next)) {
+      if (next !== undefined && normaliseForComparison(previous) !== normaliseForComparison(next)) {
         changedBefore[key] = previous;
-        changedAfter[key] = next as T[keyof T];
+        changedAfter[key] = next;
         hasChanges = true;
       }
     }

@@ -54,11 +54,15 @@ const fromPrismaError = (error: Prisma.PrismaClientKnownRequestError): AppError 
         { field },
       );
     }
-    case 'P2003':
+    case 'P2003': {
       // FK violation — the client referenced something that does not exist.
+      // `meta` is loosely typed by Prisma, so narrow rather than stringify:
+      // `String({})` would put "[object Object]" in the client's error detail.
+      const fieldName = error.meta?.['field_name'];
       return new BadRequestError('A referenced record does not exist', {
-        field: String(error.meta?.['field_name'] ?? 'reference'),
+        field: typeof fieldName === 'string' ? fieldName : 'reference',
       });
+    }
     case 'P2014':
       return new ConflictError(
         'This change would break a required relation between records',
@@ -114,7 +118,7 @@ const normalizeError = (error: unknown): AppError => {
     typeof error === 'object' &&
     error !== null &&
     'type' in error &&
-    (error as { type: unknown }).type === 'entity.too.large'
+    (error).type === 'entity.too.large'
   ) {
     return new AppError(
       'Request body exceeds the maximum allowed size',

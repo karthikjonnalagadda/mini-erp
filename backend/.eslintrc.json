@@ -38,6 +38,10 @@
     {
       "files": ["src/utils/logger.ts"],
       "rules": { "no-console": "off" }
+    },
+    {
+      "files": ["src/validators/**/*.ts", "src/config/swagger.ts"],
+      "rules": { "@typescript-eslint/explicit-function-return-type": "off" }
     }
   ]
 }
