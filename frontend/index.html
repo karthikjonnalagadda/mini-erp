@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1d4ed8" />
+    <meta
+      name="description"
+      content="Mini ERP + CRM Operations Portal — customers, inventory and sales challans for wholesale distribution."
+    />
+    <title>Mini ERP + CRM Operations Portal</title>
+
+    <!--
+      Inter, self-hosted via Google Fonts with preconnect so the font request
+      starts before the CSS that references it is parsed. `display=swap` shows
+      fallback text immediately rather than blocking first paint.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!--
+      Theme is applied before React mounts. Doing it in useEffect would paint
+      the light theme first and then flash to dark on every load.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('erp-theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (stored === 'dark' || (stored !== 'light' && prefersDark)) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (_) {
+          /* private browsing blocks localStorage — light theme is a fine default */
+        }
+      })();
+    </script>
+  </head>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
+    <noscript>
+      <p style="font-family: sans-serif; padding: 2rem">
+        This application requires JavaScript to run.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

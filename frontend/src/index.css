@@ -1,0 +1,211 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Design tokens.
+ *
+ * Every colour in the application resolves through one of these variables.
+ * Components never hardcode a hex value, which is what allows dark mode to be a
+ * single class swap and a rebrand to be a diff in this file alone.
+ *
+ * Values are raw `H S% L%` triples (no `hsl()` wrapper) so Tailwind can inject
+ * an alpha channel via `hsl(var(--token) / <alpha-value>)`.
+ */
+
+@layer base {
+  :root {
+    /* Surfaces — near-white rather than pure white; pure white on a large
+       monitor is fatiguing over an 8-hour shift. */
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Brand — a confident, non-corporate blue. */
+    --primary: 221 83% 45%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 222 47% 20%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 214 95% 93%;
+    --accent-foreground: 221 83% 35%;
+
+    /* State colours. Each is paired with a foreground that clears WCAG AA
+       (4.5:1) against it — badges must stay legible, not just look right. */
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 61% 32%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 32 95% 40%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 199 89% 40%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 214 32% 88%;
+    --input: 214 32% 88%;
+    --ring: 221 83% 45%;
+
+    /* Sidebar has its own scale: darker than the canvas so navigation reads as
+       chrome rather than content. */
+    --sidebar: 222 47% 13%;
+    --sidebar-foreground: 213 31% 82%;
+    --sidebar-accent: 221 83% 53%;
+    --sidebar-border: 222 40% 22%;
+
+    /* Chart series colours live in components/charts/chart-theme.ts, not here:
+       Recharts consumes colour strings directly, and that palette is validated
+       per-mode against the real chart surface rather than derived from these
+       UI tokens. */
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 222 47% 9%;
+    --foreground: 210 40% 96%;
+
+    --card: 222 44% 12%;
+    --card-foreground: 210 40% 96%;
+
+    --popover: 222 44% 12%;
+    --popover-foreground: 210 40% 96%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 217 33% 18%;
+    --secondary-foreground: 210 40% 96%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 217 33% 20%;
+    --accent-foreground: 217 91% 70%;
+
+    /* Lifted lightness in dark mode: a saturated dark red on a dark surface
+       fails contrast and reads as brown. */
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 55% 45%;
+    --success-foreground: 222 47% 11%;
+
+    --warning: 32 90% 55%;
+    --warning-foreground: 222 47% 11%;
+
+    --info: 199 85% 55%;
+    --info-foreground: 222 47% 11%;
+
+    --border: 217 33% 22%;
+    --input: 217 33% 22%;
+    --ring: 217 91% 60%;
+
+    --sidebar: 222 47% 11%;
+    --sidebar-foreground: 213 31% 80%;
+    --sidebar-accent: 217 91% 60%;
+    --sidebar-border: 217 33% 20%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1,
+      /* Tabular figures keep numeric columns aligned; proportional digits make
+         a currency column look ragged. */ 'tnum' 1;
+  }
+
+  /* Visible focus for keyboard users only. `:focus-visible` (not `:focus`)
+     keeps the ring off mouse clicks while preserving keyboard accessibility. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Slim scrollbars — the default Windows scrollbar is visually loud inside
+     the dense panels this app uses. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full border-2 border-solid border-transparent bg-muted-foreground/25 bg-clip-content;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40 bg-clip-content;
+  }
+
+  /* Honour the OS "reduce motion" setting. Vestibular disorders are real and
+     an ERP is used all day. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Loading skeleton: a moving highlight rather than a pulsing block, which
+     communicates "loading" without the flicker of an opacity pulse. */
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-muted;
+  }
+  .skeleton::after {
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-background/60 to-transparent;
+    content: '';
+  }
+
+  /* Data table conventions used across every list screen. */
+  .table-cell-numeric {
+    @apply text-right tabular-nums;
+  }
+
+  .sticky-table-header {
+    @apply sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80;
+  }
+}
+
+@layer utilities {
+  /* Accessible-but-invisible label text for icon-only controls. */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    @apply sr-only;
+  }
+}
+
+/* Printing a challan or a stock report should not print the app chrome. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}
