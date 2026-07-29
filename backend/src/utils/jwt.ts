@@ -12,7 +12,7 @@
  * grant the ability to mint the other.
  */
 import jwt from 'jsonwebtoken';
-import type { SignOptions } from 'jsonwebtoken';
+import type { SignOptions, VerifyOptions } from 'jsonwebtoken';
 
 import { jwtConfig } from '../config/env';
 import { ErrorCode } from '../constants/http-status';
@@ -34,23 +34,38 @@ export interface RefreshTokenPayload {
   tokenType: 'refresh';
 }
 
-const baseSignOptions: Pick<SignOptions, 'issuer' | 'audience' | 'algorithm'> = {
+/**
+ * `issuer` and `audience` are pinned on both sign and verify. Without them a
+ * token minted by any other service sharing the secret would be accepted here.
+ * `algorithm` is pinned explicitly to close the classic "alg: none" / algorithm
+ * confusion attack — never let the token declare how it should be checked.
+ */
+const signOptions = (expiresIn: string): SignOptions => ({
   issuer: jwtConfig.issuer,
   audience: jwtConfig.audience,
   algorithm: 'HS256',
+  expiresIn: expiresIn as SignOptions['expiresIn'],
+});
+
+const verifyOptions: VerifyOptions = {
+  issuer: jwtConfig.issuer,
+  audience: jwtConfig.audience,
+  algorithms: ['HS256'],
 };
 
 export const signAccessToken = (payload: Omit<AccessTokenPayload, 'tokenType'>): string =>
-  jwt.sign({ ...payload, tokenType: 'access' }, jwtConfig.accessSecret, {
-    ...baseSignOptions,
-    expiresIn: jwtConfig.accessExpiresIn,
-  } as SignOptions);
+  jwt.sign(
+    { ...payload, tokenType: 'access' },
+    jwtConfig.accessSecret,
+    signOptions(jwtConfig.accessExpiresIn),
+  );
 
 export const signRefreshToken = (payload: Omit<RefreshTokenPayload, 'tokenType'>): string =>
-  jwt.sign({ ...payload, tokenType: 'refresh' }, jwtConfig.refreshSecret, {
-    ...baseSignOptions,
-    expiresIn: jwtConfig.refreshExpiresIn,
-  } as SignOptions);
+  jwt.sign(
+    { ...payload, tokenType: 'refresh' },
+    jwtConfig.refreshSecret,
+    signOptions(jwtConfig.refreshExpiresIn),
+  );
 
 /**
  * Translates jsonwebtoken's error classes into our own so that the API returns
@@ -66,10 +81,11 @@ const toAuthError = (error: unknown): UnauthorizedError => {
 
 export const verifyAccessToken = (token: string): AccessTokenPayload => {
   try {
-    const decoded = jwt.verify(token, jwtConfig.accessSecret, {
-      ...baseSignOptions,
-      algorithms: ['HS256'],
-    }) as AccessTokenPayload;
+    const decoded = jwt.verify(
+      token,
+      jwtConfig.accessSecret,
+      verifyOptions,
+    ) as unknown as AccessTokenPayload;
 
     // Defence in depth: reject a refresh token presented as a Bearer credential
     // even in the (impossible) case that both secrets were identical.
@@ -85,10 +101,11 @@ export const verifyAccessToken = (token: string): AccessTokenPayload => {
 
 export const verifyRefreshToken = (token: string): RefreshTokenPayload => {
   try {
-    const decoded = jwt.verify(token, jwtConfig.refreshSecret, {
-      ...baseSignOptions,
-      algorithms: ['HS256'],
-    }) as RefreshTokenPayload;
+    const decoded = jwt.verify(
+      token,
+      jwtConfig.refreshSecret,
+      verifyOptions,
+    ) as unknown as RefreshTokenPayload;
 
     if (decoded.tokenType !== 'refresh') {
       throw new UnauthorizedError(AuthMessages.INVALID_TOKEN, ErrorCode.TOKEN_INVALID);

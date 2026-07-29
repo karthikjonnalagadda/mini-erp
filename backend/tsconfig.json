@@ -10,9 +10,11 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
 
-    /* Emit ----------------------------------------------------------------- */
+    /* Emit ------------------------------------------------------------------
+       `rootDir` is deliberately NOT set here. This config is used for
+       `--noEmit` typechecking and covers src/, prisma/seed.ts and tests/, which
+       have no common root. tsconfig.build.json narrows to src/ and sets it. */
     "outDir": "./dist",
-    "rootDir": "./src",
     "sourceMap": true,
     "declaration": false,
     "removeComments": false,
