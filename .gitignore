@@ -58,3 +58,14 @@ frontend/dist/
 # Prisma — generated client is reproducible from schema.prisma
 # ---------------------------------------------------------------------------
 backend/src/prisma/generated/
+
+# ---------------------------------------------------------------------------
+# Demonstration harness
+#
+# The Playwright presentation project is a separate deliverable, not part of the
+# application being assessed. It is also heavy: node_modules, a Chromium download,
+# and ~40MB video artefacts per run. Kept out of this repository deliberately.
+#
+# Remove this line if it should ever be published — nothing else depends on it.
+# ---------------------------------------------------------------------------
+demo/
