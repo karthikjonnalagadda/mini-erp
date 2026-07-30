@@ -598,23 +598,37 @@ are in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ## Screenshots
 
-> Placeholders — capture from a seeded local instance and drop the images into
-> `docs/screenshots/`.
+Captured from a seeded local instance at 1600×900. Click any image for full size.
 
-| Screen | Image |
+| | |
 |---|---|
-| Login | `docs/screenshots/01-login.png` |
-| Dashboard | `docs/screenshots/02-dashboard.png` |
-| Customers | `docs/screenshots/03-customers.png` |
-| Customer detail & timeline | `docs/screenshots/04-customer-detail.png` |
-| Products | `docs/screenshots/05-products.png` |
-| Inventory & stock adjustment | `docs/screenshots/06-inventory.png` |
-| Challan form | `docs/screenshots/07-challan-form.png` |
-| Challan detail | `docs/screenshots/08-challan-detail.png` |
-| Stock movement ledger | `docs/screenshots/09-stock-movements.png` |
-| Audit logs | `docs/screenshots/10-audit-logs.png` |
-| Dark mode | `docs/screenshots/11-dark-mode.png` |
-| Swagger UI | `docs/screenshots/12-api-docs.png` |
+| **Sign in** — role-aware entry point<br><img src="docs/screenshots/01-login.png" width="460" alt="Login screen"> | **Dashboard** — KPIs, sales trend, pipeline<br><img src="docs/screenshots/02-dashboard.png" width="460" alt="Operational dashboard"> |
+| **Customers** — search, filter, sort, paginate<br><img src="docs/screenshots/03-customers.png" width="460" alt="Customer list"> | **Customer detail** — balance, follow-ups, timeline<br><img src="docs/screenshots/04-customer-detail.png" width="460" alt="Customer detail and timeline"> |
+| **Products** — catalogue with derived stock status<br><img src="docs/screenshots/05-products.png" width="460" alt="Product catalogue"> | **Stock adjustment** — Current → After before commit<br><img src="docs/screenshots/06-inventory.png" width="460" alt="Inventory with stock adjustment dialog"> |
+| **New challan** — line items, server-side totals<br><img src="docs/screenshots/07-challan-form.png" width="460" alt="Challan form"> | **Challan detail** — status, actions, snapshot lines<br><img src="docs/screenshots/08-challan-detail.png" width="460" alt="Challan detail"> |
+| **Stock ledger** — append-only, balance before/after<br><img src="docs/screenshots/09-stock-movements.png" width="460" alt="Stock movement ledger"> | **Audit trail** — actor, timestamp, field-level diff<br><img src="docs/screenshots/10-audit-logs.png" width="460" alt="Audit logs"> |
+| **Dark mode** — one token set, both themes<br><img src="docs/screenshots/11-dark-mode.png" width="460" alt="Dashboard in dark mode"> | **OpenAPI** — contract served by the API itself<br><img src="docs/screenshots/12-api-docs.png" width="460" alt="Swagger UI"> |
+
+<details>
+<summary>Regenerating these</summary>
+
+They are produced by a script rather than captured by hand, so a UI change can be
+reflected by re-running it instead of retaking twelve images:
+
+```bash
+npm i -D @playwright/test && npx playwright install chromium   # one-time
+npm run screenshots
+```
+
+[`scripts/capture-screenshots.mjs`](scripts/capture-screenshots.mjs) signs in, walks
+every screen, opens the stock-adjustment dialog, toggles dark mode and expands the
+OpenAPI groups. Each shot is independent — a screen that fails costs that one image
+and says which, rather than aborting the set. The stack must be running.
+
+Playwright is deliberately *not* a dependency of this repository: a documentation
+tool should not weigh down every `npm install`.
+
+</details>
 
 ---
 
@@ -680,6 +694,7 @@ at closely enough.
 
 | Document | Contents |
 |---|---|
+| [docs/CODE_MAP.md](docs/CODE_MAP.md) | **Start here to navigate the code.** Feature → file lookup, the request flow, where each invariant is enforced, and the three files worth reading first |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layering, request lifecycle, SOLID in practice, the concurrency model, security model, trade-offs |
 | [docs/DATABASE.md](docs/DATABASE.md) | Mermaid ER diagram, schema decisions, referential actions, indexes, the constraints Prisma cannot express |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Neon + Render + Vercel, environment matrices, troubleshooting |
